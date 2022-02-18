@@ -1,6 +1,7 @@
 package module
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/fatih/structtag"
@@ -10,21 +11,32 @@ import (
 	"github.com/srikrsna/protoc-gen-gotag/tagger"
 )
 
+var (
+	tagValueReg = regexp.MustCompile("\\[.*\\]")
+)
+
 type tagExtractor struct {
 	pgs.Visitor
 	pgs.DebuggerCommon
 	pgsgo.Context
 
-	tags        map[string]map[string]*structtag.Tags
-	autoAddTags map[string]func(name pgs.Name) pgs.Name
+	tags               map[string]map[string]*structtag.Tags
+	autoAddTags        map[string]func(name pgs.Name) pgs.Name
+	autoAddTagsOptions map[string][]string
 }
 
 func newTagExtractor(d pgs.DebuggerCommon, ctx pgsgo.Context, autoTags []string) *tagExtractor {
-	v := &tagExtractor{DebuggerCommon: d, Context: ctx, autoAddTags: map[string]func(name pgs.Name) pgs.Name{}}
+	v := &tagExtractor{DebuggerCommon: d, Context: ctx, autoAddTags: map[string]func(name pgs.Name) pgs.Name{}, autoAddTagsOptions: map[string][]string{}}
 	v.Visitor = pgs.PassThroughVisitor(v)
 	for _, autoTag := range autoTags {
 		info := strings.Split(autoTag, "-as-")
 		tagName := info[0]
+		if tagValueReg.MatchString(tagName) {
+			val := tagValueReg.FindString(tagName)
+			tagName = tagName[:len(val)]
+			val = val[1 : len(val)-1]
+			v.autoAddTagsOptions[tagName] = strings.Split(val, ",")
+		}
 		if len(info) == 1 {
 			v.autoAddTags[tagName] = pgs.Name.LowerSnakeCase
 		} else {
@@ -101,6 +113,9 @@ func (v *tagExtractor) VisitField(f pgs.Field) (pgs.Visitor, error) {
 			}
 			if err := tags.Set(&t); err != nil {
 				v.DebuggerCommon.Fail("Error without tag", err)
+			}
+			if options, ok := v.autoAddTagsOptions[tag]; ok {
+				tags.AddOptions(tag, options...)
 			}
 		}
 	}
